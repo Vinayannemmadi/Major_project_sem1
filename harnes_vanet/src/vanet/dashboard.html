@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HARNES vs Ours: live clustering</title>
+<style>
+  :root { --bg:#f4f5f7; --panel:#ffffff; --ink:#1d2330; --muted:#6b7280; --line:#e3e6eb;
+          --harnes:#6b7280; --ours:#2563eb; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font-family:"Segoe UI", Ubuntu, Roboto, Helvetica, Arial, sans-serif; }
+  header { display:flex; align-items:baseline; gap:18px; padding:14px 22px 6px; flex-wrap:wrap; }
+  header h1 { font-size:20px; margin:0; font-weight:650; }
+  header .sub { color:var(--muted); font-size:14px; }
+  #status { margin-left:auto; font-size:14px; font-weight:600; padding:4px 10px; border-radius:999px;
+            background:#fee2e2; color:#b91c1c; }
+  #status.live { background:#dcfce7; color:#15803d; }
+  #status.done { background:#e0e7ff; color:#3730a3; }
+  main { padding:6px 22px 18px; display:grid; gap:14px; }
+  .maps { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .charts { display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .panel h2 { margin:0 0 6px; font-size:16px; }
+  .panel h3 { margin:0 0 4px; font-size:13px; color:var(--muted); font-weight:600; }
+  .stats { display:flex; gap:8px; margin-bottom:6px; flex-wrap:wrap; }
+  .chip { font-size:13px; background:#f1f3f6; border-radius:6px; padding:3px 8px; }
+  .chip b { font-variant-numeric:tabular-nums; }
+  canvas { width:100%; display:block; }
+  .map canvas { aspect-ratio:1 / 1; max-height:56vh; }
+  .chart canvas { height:150px; }
+  .legend { display:flex; gap:22px; justify-content:center; font-size:13px; color:var(--muted); flex-wrap:wrap; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { padding:6px 10px; border-bottom:1px solid var(--line); text-align:right; font-variant-numeric:tabular-nums; }
+  th:first-child, td:first-child { text-align:left; }
+  .better { color:#15803d; font-weight:600; } .worse { color:#b91c1c; font-weight:600; }
+  #summary { display:none; }
+  @media (max-width: 900px) { .maps { grid-template-columns:1fr; } .charts { grid-template-columns:1fr 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Cluster maintenance in a VANET: HARNES vs Ours</h1>
+  <span class="sub" id="title">waiting for the simulation...</span>
+  <span class="sub" id="clock"></span>
+  <span id="status">not connected</span>
+</header>
+<main>
+  <div class="maps">
+    <div class="panel map"><h2 style="color:var(--harnes)">HARNES (periodic 10 s)</h2>
+      <div class="stats" id="stats-harnes"></div><canvas id="map-harnes"></canvas></div>
+    <div class="panel map"><h2 style="color:var(--ours)">Ours (cost-aware)</h2>
+      <div class="stats" id="stats-ours"></div><canvas id="map-ours"></canvas></div>
+  </div>
+  <div class="legend">
+    <span><svg width="18" height="18"><polygon points="9,1 11.4,6.6 17.5,7.2 12.9,11.2 14.3,17.2 9,14 3.7,17.2 5.1,11.2 0.5,7.2 6.6,6.6" fill="#1f77b4" stroke="#000" stroke-width="1.2"/></svg>cluster head (CH)</span>
+    <span><svg width="14" height="14"><circle cx="7" cy="7" r="5" fill="#1f77b4"/></svg>member: colour = its cluster, line = link to its CH</span>
+    <span><svg width="12" height="12"><circle cx="6" cy="6" r="3.5" fill="#a0a0a0"/></svg>in no cluster</span>
+  </div>
+  <div class="charts">
+    <div class="panel chart"><h3>Control messages (cumulative)</h3><canvas id="c-msgs"></canvas></div>
+    <div class="panel chart"><h3>CH elections (cumulative)</h3><canvas id="c-elections"></canvas></div>
+    <div class="panel chart"><h3>Forced re-joins: member links that broke</h3><canvas id="c-rejoins"></canvas></div>
+    <div class="panel chart"><h3>Maintenance CPU time, ms (cumulative)</h3><canvas id="c-cpu_ms"></canvas></div>
+  </div>
+  <div class="panel" id="summary"><h2>Final comparison (this run)</h2><table id="sumtab"></table>
+    <p class="sub" style="color:var(--muted);font-size:13px;margin:8px 0 0">One run, one seed. Reported results use 10 seeds with confidence intervals (run_experiments.py).</p></div>
+</main>
+<script>
+const PALETTE = [[31,119,180],[44,160,44],[255,127,14],[148,103,189],[23,190,207],[140,86,75],
+  [227,119,194],[188,189,34],[0,128,128],[90,60,200],[255,190,0],[110,110,30]];
+const COL = {harnes:"#6b7280", ours:"#2563eb"};
+const rgb = h => h < 0 ? "rgb(160,160,160)" : `rgb(${PALETTE[h % PALETTE.length].join(",")})`;
+
+function fit(canvas) {
+  const r = canvas.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(r.width * d) || canvas.height !== Math.round(r.height * d)) {
+    canvas.width = Math.round(r.width * d); canvas.height = Math.round(r.height * d);
+  }
+  const ctx = canvas.getContext("2d"); ctx.setTransform(d, 0, 0, d, 0, 0);
+  return [ctx, r.width, r.height];
+}
+
+function star(ctx, x, y, R) {
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 ? R * 0.45 : R, a = -Math.PI / 2 + i * Math.PI / 5;
+    ctx.lineTo(x + r * Math.cos(a), y + r * Math.sin(a));
+  }
+  ctx.closePath();
+}
+
+let bounds = null;
+function drawMap(id, s, head) {
+  const [ctx, W, H] = fit(document.getElementById(id));
+  ctx.clearRect(0, 0, W, H);
+  if (!bounds) {
+    const pts = (s.roads && s.roads.length) ? s.roads.flat() : s.pos;
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    bounds = [Math.min(...xs) - 60, Math.min(...ys) - 60, Math.max(...xs) + 60, Math.max(...ys) + 60];
+  }
+  const [x0, y0, x1, y1] = bounds, k = Math.min(W / (x1 - x0), H / (y1 - y0));
+  const ox = (W - k * (x1 - x0)) / 2, oy = (H - k * (y1 - y0)) / 2;
+  const P = p => [ox + (p[0] - x0) * k, H - oy - (p[1] - y0) * k];
+  ctx.strokeStyle = "#d9dde3"; ctx.lineWidth = Math.max(3, 10 * k); ctx.lineCap = "round";
+  for (const r of (s.roads || [])) {
+    ctx.beginPath(); r.forEach((p, i) => { const q = P(p); i ? ctx.lineTo(...q) : ctx.moveTo(...q); }); ctx.stroke();
+  }
+  const pos = s.pos.map(P);
+  ctx.lineWidth = 2;
+  head.forEach((h, i) => { if (h >= 0 && h !== i) {
+    ctx.strokeStyle = rgb(h); ctx.beginPath(); ctx.moveTo(...pos[i]); ctx.lineTo(...pos[h]); ctx.stroke(); } });
+  head.forEach((h, i) => { if (h < 0) {
+    ctx.fillStyle = "#a0a0a0"; ctx.beginPath(); ctx.arc(...pos[i], 3.5, 0, 7); ctx.fill(); } });
+  head.forEach((h, i) => { if (h >= 0 && h !== i) {
+    ctx.fillStyle = rgb(h); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(...pos[i], 5.5, 0, 7); ctx.fill(); ctx.stroke(); } });
+  head.forEach((h, i) => { if (h === i) {
+    ctx.fillStyle = rgb(h); ctx.strokeStyle = "#000"; ctx.lineWidth = 1.4;
+    star(ctx, ...pos[i], 12); ctx.fill(); ctx.stroke(); } });
+}
+
+function niceMax(v) { if (v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p; return 10 * p; }
+
+function drawChart(id, ts, key, tmax) {
+  const [ctx, W, H] = fit(document.getElementById(id));
+  ctx.clearRect(0, 0, W, H);
+  const L = 44, R = 8, T = 8, B = 22, w = W - L - R, h = H - T - B;
+  const a = ts["harnes_" + key] || [], b = ts["ours_" + key] || [];
+  const ymax = niceMax(Math.max(1, ...a, ...b)), xmax = Math.max(10, tmax);
+  ctx.font = "11px sans-serif"; ctx.fillStyle = "#6b7280"; ctx.strokeStyle = "#e3e6eb"; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = T + h - h * i / 4; ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(L + w, y); ctx.stroke();
+    const v = ymax * i / 4; ctx.textAlign = "right"; ctx.fillText(v >= 100 ? v.toFixed(0) : +v.toFixed(1), L - 5, y + 4);
+  }
+  ctx.textAlign = "center";
+  for (let i = 0; i <= 4; i++) ctx.fillText(Math.round(xmax * i / 4) + " s", L + w * i / 4, H - 6);
+  for (const [arr, c] of [[a, COL.harnes], [b, COL.ours]]) {
+    ctx.strokeStyle = c; ctx.lineWidth = 2.2; ctx.beginPath();
+    arr.forEach((v, i) => { const x = L + w * ts.t[i] / xmax, y = T + h - h * v / ymax; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke();
+  }
+  ctx.textAlign = "left"; ctx.font = "12px sans-serif";
+  ctx.fillStyle = COL.harnes; ctx.fillText("HARNES " + fmt(a[a.length - 1]), L + 6, T + 14);
+  ctx.fillStyle = COL.ours; ctx.fillText("Ours " + fmt(b[b.length - 1]), L + 6, T + 30);
+}
+const fmt = v => v === undefined ? "" : (Math.abs(v) >= 100 || Number.isInteger(v) ? Math.round(v) : v.toFixed(1));
+
+function chips(id, m) {
+  document.getElementById(id).innerHTML =
+    `<span class="chip">clusters <b>${m.clusters}</b></span>` +
+    `<span class="chip">CH elections <b>${m.elections}</b></span>` +
+    `<span class="chip">control messages <b>${m.msgs}</b></span>` +
+    `<span class="chip">link breaks <b>${m.rejoins}</b></span>`;
+}
+
+let last = null;
+function render(s) {
+  if (!s || !s.pos) return;
+  document.getElementById("title").textContent = s.title || "";
+  document.getElementById("clock").textContent = `t = ${Math.round(s.t)} s / ${Math.round(s.t_end)} s`;
+  const st = document.getElementById("status");
+  st.textContent = s.done ? "finished" : "live"; st.className = s.done ? "done" : "live";
+  for (const k of ["harnes", "ours"]) { chips("stats-" + k, s.models[k]); drawMap("map-" + k, s, s.models[k].head); }
+  for (const key of ["msgs", "elections", "rejoins", "cpu_ms"]) drawChart("c-" + key, s.ts, key, s.t_end);
+  if (s.done && s.summary) {
+    const rows = s.summary.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td class="${r[4] || ""}">${r[3]}</td></tr>`).join("");
+    document.getElementById("sumtab").innerHTML =
+      `<tr><th>Metric</th><th style="color:var(--harnes)">HARNES (periodic 10 s)</th><th style="color:var(--ours)">Ours (cost-aware)</th><th>Change</th></tr>` + rows;
+    document.getElementById("summary").style.display = "block";
+  }
+}
+
+async function poll() {
+  try {
+    const r = await fetch("/state", {cache: "no-store"});
+    last = await r.json(); render(last);
+  } catch (e) {
+    const st = document.getElementById("status");
+    if (!(last && last.done)) { st.textContent = "not connected"; st.className = ""; }
+  }
+  setTimeout(poll, 500);
+}
+window.addEventListener("resize", () => render(last));
+poll();
+</script>
+</body>
+</html>

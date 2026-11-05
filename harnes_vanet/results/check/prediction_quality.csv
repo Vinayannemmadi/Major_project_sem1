@@ -1,0 +1,2 @@
+pairs_evaluated,survival_rate,brier_prob_model,brier_constant_rate,acc_prob_model@0.5,acc_kinematic@tau,N,seed
+59364,0.6558857219863891,0.1247962513879507,0.22569964168078224,0.825786672057139,0.825786672057139,50,0

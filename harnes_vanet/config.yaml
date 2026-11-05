@@ -1,0 +1,43 @@
+# HARNES + cost-aware cluster maintenance -- Semester 1 configuration
+# Values marked (paper) come from the HARNES paper; (ours) are our own decisions
+# for details the paper does not give. See docs/SPEC.md for the reasoning.
+
+radio_range_m: 250        # (ours) T_R, typical 802.11p; paper does not state it
+step_s: 1.0               # (ours) 1 Hz beacon / simulation step
+warmup_s: 60              # (ours) discarded at start of SUMO run
+duration_s: 300           # (ours) measured window per run
+node_counts: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]   # (paper) Table 2
+seeds: 10                 # (ours) paper reports no repetitions
+
+# --- map (paper: grid-based topology) ---
+map:
+  grid_number: 8          # junctions per side (ours)
+  grid_length_m: 200      # junction spacing (ours)
+  speed_mps: 13.89        # 50 km/h urban
+
+# --- link prediction (ours; extends paper's Gaussian relative-velocity model) ---
+horizon_tau_s: 10         # prediction horizon
+l_max_s: 60               # cap on predicted link lifetime
+sigma_window_s: 60        # window for online error-std estimate
+sigma_init_m: 30          # error std before enough data exists
+sigma_floor_m: 5          # lower bound on error std
+join_threshold: 0.6       # theta_link: min survival prob to affiliate with a CH
+bc_lambda: 1.0            # edge weight = 1 + lambda * (-ln S) for betweenness
+
+common:
+  merge_s: 5              # two CHs in range this long -> smaller cluster resigns
+
+policies:
+  periodic:               # HARNES-style BC election, full re-clustering on a timer
+    period_s: 10
+  eager:                  # HARNES-style "highest BC is CH", re-evaluated every step
+    {}
+  costaware:              # OUR contribution
+    weights: [0.3, 0.5, 0.2]   # BC, mean link survival, predicted lifetime
+    hysteresis: 0.15      # score margin a challenger must exceed
+    dwell_s: 10           # min time as CH before it can be replaced
+    gamma: 1.0            # switch only if benefit > gamma * cost
+    c_event: 2.0          # messages needed to repair one broken member link
+    proactive_leave: 0.3  # member moves to a better CH if predicted survival to its CH < this (0 = off)
+    global_isolated_frac: 0.3  # global re-cluster if this fraction of vehicles is unaffiliated
+    global_min_gap_s: 10
